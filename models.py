@@ -25,7 +25,7 @@ class Model:
         if loss_type == 'margin_loss':
             preds_correct_class = (logits * y).sum(1, keepdims=True)
             diff = preds_correct_class - logits  # difference between the correct class and all other classes
-            diff[y] = np.inf  # to exclude zeros coming from f_correct - f_correct
+            diff[np.array(y)] = np.inf  # to exclude zeros coming from f_correct - f_correct
             margin = diff.min(1, keepdims=True)
             loss = margin * -1 if targeted else margin
         elif loss_type == 'cross_entropy':
@@ -92,7 +92,7 @@ class ModelPT(Model):
             model = model_class_dict[model_name](pretrained=True)
             self.mean = np.reshape([0.485, 0.456, 0.406], [1, 3, 1, 1])
             self.std = np.reshape([0.229, 0.224, 0.225], [1, 3, 1, 1])
-            model = DataParallel(model.cuda())
+            model = DataParallel(model.cpu())
         else:
             model = model_class_dict[model_name]()
             if model_name in ['pt_post_avg_cifar10', 'pt_post_avg_imagenet']:
@@ -100,7 +100,7 @@ class ModelPT(Model):
                 self.mean = np.reshape([0.485, 0.456, 0.406], [1, 3, 1, 1])
                 self.std = np.reshape([0.229, 0.224, 0.225], [1, 3, 1, 1])
             else:
-                model = DataParallel(model).cuda()
+                model = DataParallel(model).cpu()
                 checkpoint = torch.load(model_path_dict[model_name] + '.pth')
                 self.mean = np.reshape([0.485, 0.456, 0.406], [1, 3, 1, 1])
                 self.std = np.reshape([0.225, 0.225, 0.225], [1, 3, 1, 1])
@@ -120,7 +120,7 @@ class ModelPT(Model):
         with torch.no_grad():  # otherwise consumes too much memory and leads to a slowdown
             for i in range(n_batches):
                 x_batch = x[i*self.batch_size:(i+1)*self.batch_size]
-                x_batch_torch = torch.as_tensor(x_batch, device=torch.device('cuda'))
+                x_batch_torch = torch.as_tensor(x_batch, device=torch.device('cpu'))
                 logits = self.model(x_batch_torch).cpu().numpy()
                 logits_list.append(logits)
         logits = np.vstack(logits_list)

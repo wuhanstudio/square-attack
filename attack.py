@@ -8,6 +8,16 @@ import utils
 from datetime import datetime
 np.set_printoptions(precision=5, suppress=True)
 
+from torchvision import transforms
+from PIL import Image
+import torch
+
+preprocess = transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.Resize(224),
+                    transforms.CenterCrop(224),
+                    transforms.ToTensor()
+                ])
 
 def p_selection(p_init, it, n_iters):
     """ Piece-wise constant schedule for p (the fraction of pixels changed on every iteration). """
@@ -99,7 +109,7 @@ def square_attack_l2(model, x, y, corr_classified, eps, n_iters, p_init, metrics
 
     x_best = np.clip(x + delta_init / np.sqrt(np.sum(delta_init ** 2, axis=(1, 2, 3), keepdims=True)) * eps, 0, 1)
 
-    logits = model.predict(x_best)
+    logits = model.predict(preprocess(x_best))
     loss_min = model.loss(y, logits, targeted, loss_type=loss_type)
     margin_min = model.loss(y, logits, targeted, loss_type='margin_loss')
     n_queries = np.ones(x.shape[0])  # ones because we have already used 1 query
@@ -199,53 +209,93 @@ def square_attack_l2(model, x, y, corr_classified, eps, n_iters, p_init, metrics
 def square_attack_linf(model, x, y, corr_classified, eps, n_iters, p_init, metrics_path, targeted, loss_type):
     """ The Linf square attack """
     np.random.seed(0)  # important to leave it here as well
-    min_val, max_val = 0, 1 if x.max() <= 1 else 255
-    c, h, w = x.shape[1:]
-    n_features = c*h*w
-    n_ex_total = x.shape[0]
-    x, y = x[corr_classified], y[corr_classified]
+    min_val, max_val = 0, 1 # if x.max() <= 1 else 255
+
+    n_ex_total = len(x) # x.shape[0]
+
+    for i, cor in enumerate(corr_classified):
+        if cor is False:
+            x.pop(i)
+            y.pop(i)
+    # x, y = np.array(x)[corr_classified], np.array(y)[corr_classified]
 
     # [c, 1, w], i.e. vertical stripes work best for untargeted attacks
-    init_delta = np.random.choice([-eps, eps], size=[x.shape[0], c, 1, w])
-    x_best = np.clip(x + init_delta, min_val, max_val)
 
-    logits = model.predict(x_best)
+    x_best = []
+    for i, xi in enumerate(x):
+        c, h, w = xi.shape[:]
+        init_delta = np.random.choice([-eps, eps], size=[len(x), c, 1, w])
+        x_best.append(np.clip(xi + init_delta[i], min_val, max_val))
+    # x_best = np.clip(x + init_delta, min_val, max_val)
+
+    logits = []
+    for xb in x_best:
+        logits.append(model.predict(preprocess(torch.tensor(xb)).numpy())[0])
+    logits = np.array(logits)
+
     loss_min = model.loss(y, logits, targeted, loss_type=loss_type)
     margin_min = model.loss(y, logits, targeted, loss_type='margin_loss')
-    n_queries = np.ones(x.shape[0])  # ones because we have already used 1 query
+    n_queries = np.ones(len(x))  # ones because we have already used 1 query
 
     time_start = time.time()
     metrics = np.zeros([n_iters, 7])
     for i_iter in range(n_iters - 1):
         idx_to_fool = margin_min > 0
-        x_curr, x_best_curr, y_curr = x[idx_to_fool], x_best[idx_to_fool], y[idx_to_fool]
+        idx_to_fool = [i for i, x in enumerate(idx_to_fool) if x]
+
+        x_curr = []
+        x_best_curr = []
+        y_curr = []
+        for idx in idx_to_fool:
+            x_curr.append(x[idx])
+            x_best_curr.append(x_best[idx])
+            y_curr.append(y[idx])
+
+        # x_curr, x_best_curr, y_curr = x[idx_to_fool], x_best[idx_to_fool], y[idx_to_fool]
+
         loss_min_curr, margin_min_curr = loss_min[idx_to_fool], margin_min[idx_to_fool]
-        deltas = x_best_curr - x_curr
+        deltas = [ (xb - xc) for xb, xc in zip(x_best_curr, x_curr) ]
 
         p = p_selection(p_init, i_iter, n_iters)
-        for i_img in range(x_best_curr.shape[0]):
+        for i_img in range(len(x_best_curr)):
+            c, h, w = x[i_img].shape[:]
+            n_features = c*h*w
+
             s = int(round(np.sqrt(p * n_features / c)))
             s = min(max(s, 1), h-1)  # at least c x 1 x 1 window is taken and at most c x h-1 x h-1
             center_h = np.random.randint(0, h - s)
             center_w = np.random.randint(0, w - s)
 
-            x_curr_window = x_curr[i_img, :, center_h:center_h+s, center_w:center_w+s]
-            x_best_curr_window = x_best_curr[i_img, :, center_h:center_h+s, center_w:center_w+s]
+            x_curr_window = x_curr[i_img][:, center_h:center_h+s, center_w:center_w+s]
+            x_best_curr_window = x_best_curr[i_img][:, center_h:center_h+s, center_w:center_w+s]
             # prevent trying out a delta if it doesn't change x_curr (e.g. an overlapping patch)
-            while np.sum(np.abs(np.clip(x_curr_window + deltas[i_img, :, center_h:center_h+s, center_w:center_w+s], min_val, max_val) - x_best_curr_window) < 10**-7) == c*s*s:
-                deltas[i_img, :, center_h:center_h+s, center_w:center_w+s] = np.random.choice([-eps, eps], size=[c, 1, 1])
+            while np.sum(np.abs(np.clip(x_curr_window + deltas[i_img][:, center_h:center_h+s, center_w:center_w+s], min_val, max_val) - x_best_curr_window) < 10**-7) == c*s*s:
+                deltas[i_img][:, center_h:center_h+s, center_w:center_w+s] = np.random.choice([-eps, eps], size=[c, 1, 1])
 
-        x_new = np.clip(x_curr + deltas, min_val, max_val)
+        x_new = [  np.clip(xc + d, min_val, max_val) for xc, d in zip(x_curr, deltas) ]
+        # x_new = np.clip(x_curr + deltas, min_val, max_val)
 
-        logits = model.predict(x_new)
+        logits = []
+        for xn in x_new:
+            logits.append(model.predict(preprocess(torch.tensor(xn)).numpy())[0])
+        logits = np.array(logits)
+    
+        # logits = model.predict(preprocess(torch.tensor(x_new)).numpy())
+    
         loss = model.loss(y_curr, logits, targeted, loss_type=loss_type)
         margin = model.loss(y_curr, logits, targeted, loss_type='margin_loss')
 
         idx_improved = loss < loss_min_curr
         loss_min[idx_to_fool] = idx_improved * loss + ~idx_improved * loss_min_curr
         margin_min[idx_to_fool] = idx_improved * margin + ~idx_improved * margin_min_curr
-        idx_improved = np.reshape(idx_improved, [-1, *[1]*len(x.shape[:-1])])
-        x_best[idx_to_fool] = idx_improved * x_new + ~idx_improved * x_best_curr
+
+        idx_improved = np.reshape(idx_improved, [-1, *[1]*3])
+        # idx_improved = np.reshape(idx_improved, [-1, *[1]*len(x.shape[:-1])])
+
+        for i in range(len(idx_improved)):
+            x_best[idx_to_fool[i]] = idx_improved[i] * x_new[i] + ~idx_improved[i] * x_best_curr[i]
+        # x_best[idx_to_fool] = idx_improved * x_new + ~idx_improved * x_best_curr
+
         n_queries[idx_to_fool] += 1
 
         acc = (margin_min > 0.0).sum() / n_ex_total
@@ -254,7 +304,7 @@ def square_attack_linf(model, x, y, corr_classified, eps, n_iters, p_init, metri
         avg_margin_min = np.mean(margin_min)
         time_total = time.time() - time_start
         log.print('{}: acc={:.2%} acc_corr={:.2%} avg#q_ae={:.2f} med#q={:.1f}, avg_margin={:.2f} (n_ex={}, eps={:.3f}, {:.2f}s)'.
-            format(i_iter+1, acc, acc_corr, mean_nq_ae, median_nq_ae, avg_margin_min, x.shape[0], eps, time_total))
+            format(i_iter+1, acc, acc_corr, mean_nq_ae, median_nq_ae, avg_margin_min, len(x), eps, time_total))
 
         metrics[i_iter] = [acc, acc_corr, mean_nq, mean_nq_ae, median_nq_ae, margin_min.mean(), time_total]
         if (i_iter <= 500 and i_iter % 20 == 0) or (i_iter > 100 and i_iter % 50 == 0) or i_iter + 1 == n_iters or acc == 0:
@@ -283,8 +333,8 @@ if __name__ == '__main__':
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     dataset = 'mnist' if 'mnist' in args.model else 'cifar10' if 'cifar10' in args.model else 'imagenet'
-    timestamp = str(datetime.now())[:-7]
-    hps_str = '{} model={} dataset={} attack={} n_ex={} eps={} p={} n_iter={}'.format(
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    hps_str = '{}_{}_{}_{}_n_ex_eps_p_n_iter_'.format(
         timestamp, args.model, dataset, args.attack, args.n_ex, args.eps, args.p, args.n_iter)
     args.eps = args.eps / 255.0 if dataset == 'imagenet' else args.eps  # for mnist and cifar10 we leave as it is
     batch_size = data.bs_dict[dataset]
@@ -311,8 +361,14 @@ if __name__ == '__main__':
     models_class_dict = {'tf': models.ModelTF, 'pt': models.ModelPT}
     model = models_class_dict[model_type](args.model, batch_size, gpu_memory)
 
-    logits_clean = model.predict(x_test)
-    corr_classified = logits_clean.argmax(1) == y_test
+    logits_clean = []
+    corr_classified = []
+    for i, x in enumerate(x_test):
+        logits = model.predict(preprocess(torch.tensor(x)).numpy())
+        logits_clean.append(logits)
+        corr_classified.append((logits.argmax(1) == y_test[i])[0])
+    logits_clean = np.array(logits_clean)
+
     # important to check that the model was restored correctly and the clean accuracy is high
     log.print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)))
 
