@@ -284,7 +284,7 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     dataset = 'mnist' if 'mnist' in args.model else 'cifar10' if 'cifar10' in args.model else 'imagenet'
     timestamp = str(datetime.now())[:-7]
-    hps_str = '{} model={} dataset={} attack={} n_ex={} eps={} p={} n_iter={}'.format(
+    hps_str = '{}_model={}_dataset={}_attack={}_n_ex={}_eps={}_p={}_n_iter={}'.format(
         timestamp, args.model, dataset, args.attack, args.n_ex, args.eps, args.p, args.n_iter)
     args.eps = args.eps / 255.0 if dataset == 'imagenet' else args.eps  # for mnist and cifar10 we leave as it is
     batch_size = data.bs_dict[dataset]
