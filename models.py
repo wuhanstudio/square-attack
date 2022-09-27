@@ -11,6 +11,15 @@ from logit_pairing.models import LeNet as lp_model_mnist, ResNet20_v2 as lp_mode
 from post_avg.postAveragedModels import pa_resnet110_config1 as post_avg_cifar10_resnet
 from post_avg.postAveragedModels import pa_resnet152_config1 as post_avg_imagenet_resnet
 
+import numpy as np
+np.set_printoptions(suppress=True)
+
+from PIL import Image
+
+import requests
+from io import BytesIO
+import base64
+import urllib.request, json 
 
 class Model:
     def __init__(self, batch_size, gpu_memory):
@@ -127,6 +136,61 @@ class ModelPT(Model):
         return logits
 
 
+class VGG16ImageNet(Model):
+    def __init__(self, url):
+        """
+        - url: DeepAPI server URL
+        """
+        self.url = url
+
+        # # Load the Keras application labels 
+        with urllib.request.urlopen("https://storage.googleapis.com/download.tensorflow.org/data/imagenet_class_index.json") as l_url:
+            imagenet_json = json.load(l_url)
+            imagenet_json['517'] = ['n02012849', 'crane_bird']
+            imagenet_json['639'] = ['n03710721', 'maillot_tank_suit']
+            self.imagenet_labels = [imagenet_json[str(k)][1] for k in range(len(imagenet_json))]
+
+    def predict(self, X):
+        """
+        - X: numpy array of shape (N, C, H, W)
+        """
+        y_pred = []
+        try:
+            y_pred_temp = np.zeros([len(self.imagenet_labels)])
+            for x in X:
+                # Load the input image and construct the payload for the request
+                image = Image.fromarray(np.uint8(x * 255.0))
+                buff = BytesIO()
+                image.save(buff, format="JPEG")
+
+                data = {'file': base64.b64encode(buff.getvalue()).decode("utf-8")}
+                res = requests.post(self.url, json=data).json()['predictions']
+
+                for r in res:
+                    y_pred_temp[self.imagenet_labels.index(r['label'])] = r['probability']
+
+                y_pred.append(y_pred_temp)
+
+        except Exception as e:
+            print(e)
+
+        return np.array(y_pred)
+
+    def print(self, y):
+        """
+        Print the prediction result.
+        """
+        print()
+        for i in range(0, len(y)):
+            print('{:<25s}{:.5f}'.format(self.__label_encoder__.inverse_transform([i])[0], y[i]))
+
+    def get_class_name(self, i):
+        """
+        Get the class name from the prediction label 0-10.
+        """
+        return self.__label_encoder__.inverse_transform([i])[0]
+
+
 model_path_dict = {'madry_mnist_robust': 'madry_mnist/models/robust',
                    'madry_cifar10_robust': 'madry_cifar10/models/robust',
                    'clp_mnist': 'logit_pairing/models/clp_mnist',
@@ -147,6 +211,7 @@ model_class_dict = {'pt_vgg': torch_models.vgg16_bn,
                     'lsq_cifar10': lp_model_cifar10,
                     'pt_post_avg_cifar10': post_avg_cifar10_resnet,
                     'pt_post_avg_imagenet': post_avg_imagenet_resnet,
+                    'deepapi_vgg16': VGG16ImageNet,
                     }
 all_model_names = list(model_class_dict.keys())
 

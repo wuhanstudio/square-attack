@@ -12,12 +12,13 @@ from torchvision import transforms
 from PIL import Image
 import torch
 
-preprocess = transforms.Compose([
-                    transforms.ToPILImage(),
-                    transforms.Resize(224),
-                    transforms.CenterCrop(224),
-                    transforms.ToTensor()
-                ])
+preprocess = None
+
+def nchw_to_nhwc(x):
+    """
+    Convert a NCHW tensor to NHWC tensor.
+    """
+    return torch.tensor(np.array([x.numpy().transpose(1, 2, 0)]))
 
 def p_selection(p_init, it, n_iters):
     """ Piece-wise constant schedule for p (the fraction of pixels changed on every iteration). """
@@ -338,7 +339,7 @@ if __name__ == '__main__':
         timestamp, args.model, dataset, args.attack, args.n_ex, args.eps, args.p, args.n_iter)
     args.eps = args.eps / 255.0 if dataset == 'imagenet' else args.eps  # for mnist and cifar10 we leave as it is
     batch_size = data.bs_dict[dataset]
-    model_type = 'pt' if 'pt_' in args.model else 'tf'
+    model_type = 'deepapi' if 'deepapi' in args.model else 'pt' if 'pt_' in args.model else 'tf'
     n_cls = 1000 if dataset == 'imagenet' else 10
     gpu_memory = 0.5 if dataset == 'mnist' and args.n_ex > 1000 else 0.15 if dataset == 'mnist' else 0.99
 
@@ -358,15 +359,34 @@ if __name__ == '__main__':
         x_test /= 255.0
         args.eps = args.eps / 255.0
 
-    models_class_dict = {'tf': models.ModelTF, 'pt': models.ModelPT}
-    model = models_class_dict[model_type](args.model, batch_size, gpu_memory)
+    models_class_dict = {'tf': models.ModelTF, 'pt': models.ModelPT, 'deepapi_vgg16': models.VGG16ImageNet}
+
+    if model_type == 'deepapi':
+        model = models_class_dict[args.model]('http://localhost:8080/vgg16')
+    else:
+        model = models_class_dict[model_type](args.model, batch_size, gpu_memory)
+
+    if model_type == 'deepapi':
+        preprocess = nchw_to_nhwc
+    else:
+        preprocess = transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.Resize(224),
+                    transforms.CenterCrop(224),
+                    transforms.ToTensor()
+                ])
 
     logits_clean = []
     corr_classified = []
     for i, x in enumerate(x_test):
         logits = model.predict(preprocess(torch.tensor(x)).numpy())
+
         logits_clean.append(logits)
         corr_classified.append((logits.argmax(1) == y_test[i])[0])
+        if logits.argmax(1) != y_test[i]:
+            # im = Image.fromarray(np.array(np.uint8(preprocess(torch.tensor(x)).numpy()[0]*255.0)))
+            # im.show()
+            print('Incorrectly classified: {} {} as {}'.format(i, model.imagenet_labels[y_test[i]], model.imagenet_labels[logits.argmax(1)[0]]))
     logits_clean = np.array(logits_clean)
 
     # important to check that the model was restored correctly and the clean accuracy is high
@@ -379,3 +399,8 @@ if __name__ == '__main__':
     n_queries, x_adv = square_attack(model, x_test, y_target_onehot, corr_classified, args.eps, args.n_iter,
                                      args.p, metrics_path, args.targeted, args.loss)
 
+    for i, x in enumerate(x_adv):
+        im = Image.fromarray(np.array(np.uint8(preprocess(torch.tensor(x_test[i])).numpy()[0]*255.0)))
+        im_adv = Image.fromarray(np.array(np.uint8(preprocess(torch.tensor(x)).numpy()[0]*255.0)))
+        im.save(f"images/x_{i}.jpg")
+        im_adv.save(f"images/x_{i}_adv.jpg")
