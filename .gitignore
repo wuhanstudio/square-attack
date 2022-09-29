@@ -13,3 +13,6 @@ secret.zip
 *.pyc
 
 .idea/
+.vscode/
+
+x*.jpg

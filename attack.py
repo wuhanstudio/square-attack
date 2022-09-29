@@ -299,15 +299,17 @@ def square_attack_linf(model, x, y, corr_classified, eps, n_iters, p_init, metri
 
         n_queries[idx_to_fool] += 1
 
-        acc = (margin_min > 0.0).sum() / n_ex_total
-        acc_corr = (margin_min > 0.0).mean()
-        mean_nq, mean_nq_ae, median_nq_ae = np.mean(n_queries), np.mean(n_queries[margin_min <= 0]), np.median(n_queries[margin_min <= 0])
-        avg_margin_min = np.mean(margin_min)
-        time_total = time.time() - time_start
-        log.print('{}: acc={:.2%} acc_corr={:.2%} avg#q_ae={:.2f} med#q={:.1f}, avg_margin={:.2f} (n_ex={}, eps={:.3f}, {:.2f}s)'.
-            format(i_iter+1, acc, acc_corr, mean_nq_ae, median_nq_ae, avg_margin_min, len(x), eps, time_total))
+        if len(margin_min) > 0 and len(n_queries) > 0:
+            acc = (margin_min > 0.0).sum() / n_ex_total
+            acc_corr = (margin_min > 0.0).mean()
+            mean_nq, mean_nq_ae, median_nq_ae = np.mean(n_queries), np.mean(n_queries[margin_min <= 0]), np.median(n_queries[margin_min <= 0])
+            avg_margin_min = np.mean(margin_min)
+            time_total = time.time() - time_start
+            log.print('{}: acc={:.2%} acc_corr={:.2%} avg#q_ae={:.2f} med#q={:.1f}, avg_margin={:.2f} (n_ex={}, eps={:.3f}, {:.2f}s)'.
+                format(i_iter+1, acc, acc_corr, mean_nq_ae, median_nq_ae, avg_margin_min, len(x), eps, time_total))
 
-        metrics[i_iter] = [acc, acc_corr, mean_nq, mean_nq_ae, median_nq_ae, margin_min.mean(), time_total]
+            metrics[i_iter] = [acc, acc_corr, mean_nq, mean_nq_ae, median_nq_ae, margin_min.mean(), time_total]
+
         if (i_iter <= 500 and i_iter % 20 == 0) or (i_iter > 100 and i_iter % 50 == 0) or i_iter + 1 == n_iters or acc == 0:
             np.save(metrics_path, metrics)
         if acc == 0:

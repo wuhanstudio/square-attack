@@ -28,7 +28,7 @@ def load_cifar10(n_ex):
 
 
 def load_imagenet(n_ex, size=224):
-    IMAGENET_SL = size
+    # IMAGENET_SL = size
 
     # IMAGENET_PATH = "/scratch/maksym/imagenet/val_orig"
     # imagenet = ImageFolder(IMAGENET_PATH,
